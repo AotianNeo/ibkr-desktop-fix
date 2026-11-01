@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  verify:
+    name: Verify Bytecode, Agent & Installer (JDK ${{ matrix.java }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ["17", "21"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up Temurin JDK ${{ matrix.java }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: ${{ matrix.java }}
+
+      - name: Build & verify Backend 1 (javac --release 17)
+        run: |
+          python3 scripts/build_jar.py --force-javac --out dist/ibkr-webchannel-fix-javac.jar
+          python3 tests/verify_agent.py --jar dist/ibkr-webchannel-fix-javac.jar --dump-fixtures build/fixtures
+          mkdir -p build/test
+          javac --release 17 -cp dist/ibkr-webchannel-fix-javac.jar -d build/test tests/JvmSmokeTest.java
+          java -Xverify:all \
+            -javaagent:dist/ibkr-webchannel-fix-javac.jar \
+            -cp dist/ibkr-webchannel-fix-javac.jar:build/test \
+            JvmSmokeTest \
+            build/fixtures/QWebAppEngineView.orig.class \
+            build/fixtures/LocaleResourcesMgr.orig.class \
+            build/fixtures/LanguageSettings.orig.class
+
+      - name: Build & verify Backend 2 (Zero-JDK Python ClassFile v61.0 Assembler)
+        run: |
+          python3 scripts/build_jar.py --force-python --out dist/ibkr-webchannel-fix-python.jar
+          python3 tests/verify_agent.py --jar dist/ibkr-webchannel-fix-python.jar
+          mkdir -p build/test_py
+          javac --release 17 -cp dist/ibkr-webchannel-fix-python.jar -d build/test_py tests/JvmSmokeTest.java
+          java -Xverify:all \
+            -javaagent:dist/ibkr-webchannel-fix-python.jar \
+            -cp dist/ibkr-webchannel-fix-python.jar:build/test_py \
+            JvmSmokeTest \
+            build/fixtures/QWebAppEngineView.orig.class \
+            build/fixtures/LocaleResourcesMgr.orig.class \
+            build/fixtures/LanguageSettings.orig.class
+
+      - name: Test cross-platform installer & uninstaller idempotency
+        run: |
+          mkdir -p build/mock_ibkr
+          printf -- "-Xmx4096m\n-XX:+UseParallelGC\n-Dio.qt.debug=debug\n-Dio.qt.log-messages=ALL\n### keep on update\n" > build/mock_ibkr/ntws.vmoptions
+          python3 install.py --ibkr-dir build/mock_ibkr --agent-dest build/mock_ntws/ibkr-webchannel-fix.jar
+          python3 install.py --ibkr-dir build/mock_ibkr --agent-dest build/mock_ntws/ibkr-webchannel-fix.jar
+          test -f build/mock_ntws/ibkr-webchannel-fix.jar
+          test -f build/mock_ibkr/ntws.vmoptions.bak
+          test "$(grep -c 'ibkr-webchannel-fix.jar' build/mock_ibkr/ntws.vmoptions)" -eq 1
+          grep -q '^-Dio.qt.debug=debug$' build/mock_ibkr/ntws.vmoptions
+          grep -q '^-XX:+UseZGC$' build/mock_ibkr/ntws.vmoptions
+          grep -q '^-Dio.qt.log-messages=CRITICAL$' build/mock_ibkr/ntws.vmoptions
+          python3 install.py --uninstall --ibkr-dir build/mock_ibkr --agent-dest build/mock_ntws/ibkr-webchannel-fix.jar
+          test ! -f build/mock_ntws/ibkr-webchannel-fix.jar
+          test "$(grep -c 'ibkr-webchannel-fix.jar' build/mock_ibkr/ntws.vmoptions || true)" -eq 0
