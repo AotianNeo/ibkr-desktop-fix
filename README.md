@@ -11,7 +11,7 @@ All bytecode transformations happen strictly in memory at class-load time. Offic
 
 Measured on Apple Silicon macOS with IBKR Desktop 0016.6 (Build 3.6h, bundled Temurin JRE 25.0.2+10), logged into a live account on the Quote / TradingView chart view with zero mouse or keyboard input:
 
-| Metric / Process | Stock IBKR Desktop | Phase 1 (ZGC + CRITICAL logs + QWebChannel loop fix) | Full ibkr-desktop-fix (v1.0.0) |
+| Metric / Process | Stock IBKR Desktop | Phase 1 (ZGC + CRITICAL logs + QWebChannel loop fix) | Full ibkr-desktop-fix (v1.0.1) |
 |--------|--------|--------|--------|
 | **JavaApplicationStub** (JVM + Qt Quick + CrBrowserMain) | 53.2% – 65.0% | 37.8% – 53.2% (main-thread 14.4% → 3.3%) | **0.7% – 2.1%** |
 | **Active QtWebEngineProcess** (TradingViewChartWebapp) | 10.4% – 12.5% | 10.4% – 12.5% | **0.1% – 0.8%** |
@@ -37,6 +37,8 @@ On Windows (PowerShell or Command Prompt):
 ```powershell
 python install.py
 ```
+
+On Windows accounts whose user profile path contains spaces (such as C:\Users\First Last), install.py automatically deploys ibkr-webchannel-fix.jar to a whitespace-free directory (C:\Jts\ibkr-desktop-fix or C:\ProgramData\ibkr-desktop-fix) so the install4j launcher does not split the -javaagent option on whitespace.
 
 Restart IBKR Desktop after installation to activate the agent.
 
@@ -82,11 +84,11 @@ Profiling a live logged-in IBKR Desktop session (macOS sample profiler, thread-l
 
 - **Non-Persisted Startup Translation Disclaimer Modal (LocaleResourcesMgr & LanguageSettings)**: On Simplified Chinese (zh_CN) and other non-English locales, IBKR Desktop displays a modal disclaimer dialog (Confirm_IB_translation) on every startup even after clicking OK. Disassembling LanguageSettings.class and LocaleResourcesMgr\$ConfirmTranslationDialog.class inside ntwslaunch-*.jar reveals two upstream bugs: ConfirmTranslationDialog.onOk() closes the window without ever calling LanguageSettings.addConfirmedTranslations(lang), and LanguageSettings.m_confirmedTranslations is an in-memory HashSet with no XML serialization field. WebChannelFixAgent rewrites LocaleResourcesMgr.confirmTranslationLater(), confirmTranslationIfNecessary(...), and confirmTranslation(...) to 1-byte void returns and rewrites LanguageSettings.isTranslationConfirmed(String) to return true.
 
-## Dangerous ntws.vmoptions Pitfalls (What NOT to Add)
+## Common ntws.vmoptions Pitfalls & Myths
 
-Several circulating tuning guides for IBKR Desktop recommend JVM options that either crash startup immediately or increase CPU load:
+Several circulating tuning guides for IBKR Desktop recommend JVM options that are either dead no-ops, crash startup immediately, or increase CPU load:
 
-- **Never change -Dio.qt.debug=debug to -Dio.qt.debug=release**: In QtJambi's native library loader, io.qt.debug is not a logging verbosity switch—it selects whether QtJambi loads debug-suffixed or release-suffixed C++ dynamic libraries from the app bundle. Because IBKR Desktop ships debug-named QtJambi libraries, changing this flag to release immediately crashes startup with UnsatisfiedLinkError before the login window opens.
+- **Setting -Dio.qt.debug=release is a dead no-op (neither lowers CPU nor crashes startup)**: Despite its name, io.qt.debug is not a logging verbosity switch—that role belongs to -Dio.qt.log-messages=CRITICAL. In QtJambi 6.8.8, io.qt.debug is only consulted when probing loose native JAR filenames on disk. Because IBKR Desktop already places all 13 qtjambi-*-native-*.jar archives on the JVM ClassPath and every bundled META-INF/qtjambi-deployment.xml declares configuration="release", io.qt.internal.LibraryUtility.<clinit> sets dontSearchDeploymentSpec = true, skips the io.qt.debug filename branch entirely, and unconditionally overwrites LibraryUtility.configuration with Configuration.Release from the loaded LibraryBundle (which is also why IBKR's own stale -Dio.qt.debug=debug default in Info.plist does not trigger an UnsatisfiedLinkError). Overriding -Dio.qt.debug=release in ntws.vmoptions does nothing at runtime.
 - **Never put -DQTWEBENGINE_CHROMIUM_FLAGS=--disable-background-timer-throttling --disable-renderer-backgrounding in ntws.vmoptions**: First, QTWEBENGINE_CHROMIUM_FLAGS is an OS environment variable read by Qt C++ via qgetenv(), not a Java -D system property, so Chromium ignores it in vmoptions. Second, unquoted space-separated tokens such as --disable-renderer-backgrounding in a vmoptions line are passed to JNI_CreateJavaVM as unknown JVM flags and abort startup. Third, even if exported in the shell environment, disabling background timer throttling and renderer backgrounding forbids Chromium from throttling hidden pages, forcing background tabs to burn more CPU.
 
 ## Architecture & Verification Suite

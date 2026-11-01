@@ -47,7 +47,8 @@ jobs:
             JvmSmokeTest \
             build/fixtures/QWebAppEngineView.orig.class \
             build/fixtures/LocaleResourcesMgr.orig.class \
-            build/fixtures/LanguageSettings.orig.class
+            build/fixtures/LanguageSettings.orig.class \
+            build/fixtures/QWebAppEngineViewFullFrame.orig.class
 
       - name: Build & verify Backend 2 (Zero-JDK Python ClassFile v61.0 Assembler)
         run: |
@@ -61,12 +62,16 @@ jobs:
             JvmSmokeTest \
             build/fixtures/QWebAppEngineView.orig.class \
             build/fixtures/LocaleResourcesMgr.orig.class \
-            build/fixtures/LanguageSettings.orig.class
+            build/fixtures/LanguageSettings.orig.class \
+            build/fixtures/QWebAppEngineViewFullFrame.orig.class
 
-      - name: Test cross-platform installer & uninstaller idempotency
+      - name: Test cross-platform installer, whitespace-path handling & uninstaller idempotency
         run: |
-          mkdir -p build/mock_ibkr
+          mkdir -p build/mock_ibkr "build/First Last"
           printf -- "-Xmx4096m\n-XX:+UseParallelGC\n-Dio.qt.debug=debug\n-Dio.qt.log-messages=ALL\n### keep on update\n" > build/mock_ibkr/ntws.vmoptions
+          python3 -c 'import install; w = install.default_agent_dest("Windows", r"C:\Users\First Last", {"PROGRAMDATA": r"C:\ProgramData"}); assert w == r"C:\ProgramData\ibkr-desktop-fix\ibkr-webchannel-fix.jar", w; m = install.default_agent_dest("Darwin", "/Users/First Last", {}); assert m == "/Users/Shared/ibkr-desktop-fix/ibkr-webchannel-fix.jar", m'
+          HOME="$PWD/build/First Last" python3 install.py --dry-run --ibkr-dir build/mock_ibkr | grep -q '^-javaagent:/var/tmp/ibkr-desktop-fix/ibkr-webchannel-fix.jar$'
+          ! python3 install.py --ibkr-dir build/mock_ibkr --agent-dest "build/First Last/ibkr-webchannel-fix.jar"
           python3 install.py --ibkr-dir build/mock_ibkr --agent-dest build/mock_ntws/ibkr-webchannel-fix.jar
           python3 install.py --ibkr-dir build/mock_ibkr --agent-dest build/mock_ntws/ibkr-webchannel-fix.jar
           test -f build/mock_ntws/ibkr-webchannel-fix.jar
@@ -75,6 +80,6 @@ jobs:
           grep -q '^-Dio.qt.debug=debug$' build/mock_ibkr/ntws.vmoptions
           grep -q '^-XX:+UseZGC$' build/mock_ibkr/ntws.vmoptions
           grep -q '^-Dio.qt.log-messages=CRITICAL$' build/mock_ibkr/ntws.vmoptions
-          python3 install.py --uninstall --ibkr-dir build/mock_ibkr --agent-dest build/mock_ntws/ibkr-webchannel-fix.jar
+          python3 install.py --uninstall --ibkr-dir build/mock_ibkr
           test ! -f build/mock_ntws/ibkr-webchannel-fix.jar
           test "$(grep -c 'ibkr-webchannel-fix.jar' build/mock_ibkr/ntws.vmoptions || true)" -eq 0

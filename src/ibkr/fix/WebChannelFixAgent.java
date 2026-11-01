@@ -356,6 +356,11 @@ public final class WebChannelFixAgent implements ClassFileTransformer {
             ds.writeByte(21);
             ds.writeByte(6);
             ds.write(buf, smtOff + 3, smtLen - 3);
+        } else if (ft == 64) {
+            ds.writeShort(n + 1);
+            ds.writeByte(21);
+            ds.writeByte(70);
+            ds.write(buf, smtOff + 3, smtLen - 3);
         } else if ((ft >= 1 && ft <= 63) || (ft >= 65 && ft <= 127)) {
             ds.writeShort(n + 2);
             ds.writeByte(21);
@@ -364,10 +369,11 @@ public final class WebChannelFixAgent implements ClassFileTransformer {
             ds.write(buf, smtOff + 3, smtLen - 3);
         } else {
             int d0 = u2(buf, smtOff + 3);
-            if (d0 == 0 && ft == 251) {
+            if (d0 == 0) {
                 ds.writeShort(n + 1);
                 ds.writeByte(21);
-                ds.writeByte(6);
+                ds.writeByte(ft);
+                ds.writeShort(6);
                 ds.write(buf, smtOff + 5, smtLen - 5);
             } else {
                 ds.writeShort(n + 2);

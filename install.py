@@ -14,8 +14,10 @@ Cross-platform installer & uninstaller for ibkr-desktop-fix (macOS / Linux / Win
 import argparse
 import glob
 import hashlib
+import ntpath
 import os
 import platform
+import posixpath
 import shutil
 import sys
 import tempfile
@@ -97,8 +99,45 @@ def detect_ntws4launch_jar(ibkr_dir: str) -> str:
     return matches[-1] if matches else None
 
 
-def default_agent_dest() -> str:
-    return os.path.join(os.path.expanduser("~"), "ntws", "ibkr-webchannel-fix.jar")
+def has_whitespace(s: str) -> bool:
+    return any(c.isspace() for c in s)
+
+
+def default_agent_dest(sysname: str = None, home: str = None, env: dict = None) -> str:
+    sysname = sysname or platform.system()
+    home = home if home is not None else os.path.expanduser("~")
+    env = env if env is not None else os.environ
+    pjoin = ntpath.join if sysname == "Windows" else posixpath.join
+    primary = pjoin(home, "ntws", "ibkr-webchannel-fix.jar")
+    if not has_whitespace(primary):
+        return primary
+
+    if sysname == "Windows":
+        win_dirs = []
+        if sysname == platform.system() and os.path.isdir(r"C:\Jts"):
+            win_dirs.append(r"C:\Jts\ibkr-desktop-fix")
+        win_dirs.extend([
+            ntpath.join(env.get("PROGRAMDATA", r"C:\ProgramData"), "ibkr-desktop-fix"),
+            ntpath.join(env.get("PUBLIC", r"C:\Users\Public"), "ibkr-desktop-fix"),
+            r"C:\Jts\ibkr-desktop-fix",
+        ])
+        for d in win_dirs:
+            cand = ntpath.join(d, "ibkr-webchannel-fix.jar")
+            if not has_whitespace(cand):
+                return cand
+        return r"C:\ibkr-desktop-fix\ibkr-webchannel-fix.jar"
+
+    if sysname == "Darwin":
+        return "/Users/Shared/ibkr-desktop-fix/ibkr-webchannel-fix.jar"
+    return "/var/tmp/ibkr-desktop-fix/ibkr-webchannel-fix.jar"
+
+
+def detect_installed_agent_dest(raw_text: str) -> str:
+    for ln in raw_text.splitlines():
+        s = ln.strip()
+        if is_our_agent_line(s):
+            return s[len("-javaagent:"):]
+    return None
 
 
 def sha256_file(path: str) -> str:
@@ -204,10 +243,16 @@ def atomic_write_text(path: str, content: str):
 def run_install(args):
     vmopt_path = detect_vmoptions(args.ibkr_dir, args.vmoptions)
     ibkr_dir = os.path.dirname(vmopt_path)
-    agent_dest = os.path.abspath(os.path.expanduser(args.agent_dest))
 
     with open(vmopt_path, "r", encoding="utf-8") as f:
         orig_text = f.read()
+
+    if args.agent_dest:
+        agent_dest = os.path.abspath(os.path.expanduser(args.agent_dest))
+    elif args.uninstall:
+        agent_dest = detect_installed_agent_dest(orig_text) or os.path.abspath(default_agent_dest())
+    else:
+        agent_dest = os.path.abspath(default_agent_dest())
 
     if args.uninstall:
         new_text = compute_uninstalled_vmoptions(orig_text)
@@ -225,6 +270,12 @@ def run_install(args):
         remove_or_trash_file(agent_dest)
         print("[install] Uninstall complete. Restart IBKR Desktop to apply.")
         return
+
+    if has_whitespace(agent_dest):
+        raise ValueError(
+            f"Agent JAR destination path must not contain spaces (install4j splits vmoptions on whitespace): {agent_dest}\n"
+            f"Pass --agent-dest with a whitespace-free directory."
+        )
 
     ntws4_jar = detect_ntws4launch_jar(ibkr_dir)
     print(f"[install] Detected IBKR dir : {ibkr_dir}")
@@ -279,7 +330,11 @@ def main():
     ap = argparse.ArgumentParser(description="Install or uninstall ibkr-desktop-fix")
     ap.add_argument("--ibkr-dir", default=None, help="Path to IBKR Desktop installation directory")
     ap.add_argument("--vmoptions", default=None, help="Explicit path to ntws.vmoptions")
-    ap.add_argument("--agent-dest", default=default_agent_dest(), help="Destination path for ibkr-webchannel-fix.jar")
+    ap.add_argument(
+        "--agent-dest",
+        default=None,
+        help=f"Destination path for ibkr-webchannel-fix.jar (default: {default_agent_dest()})",
+    )
     ap.add_argument("--no-zgc", action="store_true", help="Do not add -XX:-UseParallelGC / -XX:+UseZGC")
     ap.add_argument("--prebuilt", action="store_true", help="Use prebuilt dist/ibkr-webchannel-fix.jar if present")
     ap.add_argument("--uninstall", action="store_true", help="Remove managed flags from ntws.vmoptions and remove agent JAR")

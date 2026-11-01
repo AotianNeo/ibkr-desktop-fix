@@ -373,7 +373,71 @@ def build_synthetic_fixtures():
         struct.pack(">IHH", 0xCAFEBABE, 0, 61) + cp3.serialize()
         + struct.pack(">HHHHHH", 0x0021, t3, s3, 0, 0, len(m3)) + b"".join(m3) + struct.pack(">H", 0)
     )
-    return w_cls, loc_cls, lng_cls
+
+    # 4. Variant QWebAppEngineView with 41-byte sendSuspendResume and full_frame (ft=255, d0=0) at PC=0
+    cp4 = bj.ConstantPool()
+    t4, s4 = cp4.cls(THIS), cp4.cls(SUPER)
+    map_cls4 = cp4.cls("java/util/Map")
+    obj_init4 = cp4.methodref(SUPER, "<init>", "()V")
+    f_vis4 = cp4.fieldref(THIS, "visible", "Z")
+    f_last4 = cp4.fieldref(THIS, "lastScript", "Ljava/lang/String;")
+    str_cls4 = cp4.cls("java/lang/String")
+    s_wc4 = cp4.string("prefix\n" + bj.BAD_OPT_JS + "\n\x01;\nsuffix")
+    s_wh4 = cp4.string(bj.WHEEL_PREFIX + ", e=>{ if( e.ctrlKey ) e.preventDefault(); }, { capture: true, passive: false } );\n")
+    mref_vis4 = cp4.methodref(THIS, "isVisible", "()Z")
+    cp4.methodref(THIS, "executeScript", "(Ljava/lang/String;)V")
+    smt_u8_4 = cp4.utf8("StackMapTable")
+    code_u8_4 = cp4.utf8("Code")
+
+    f_list4 = [
+        struct.pack(">HHHH", 0x0001, cp4.utf8("visible"), cp4.utf8("Z"), 0),
+        struct.pack(">HHHH", 0x0001, cp4.utf8("lastScript"), cp4.utf8("Ljava/lang/String;"), 0),
+    ]
+
+    def raw_m4(acc, name, desc, ms, ml, bc, smt=None):
+        ca = bytearray(struct.pack(">HHI", ms, ml, len(bc)) + bc + struct.pack(">H", 0))
+        if smt is not None:
+            ca.extend(struct.pack(">HHI", 1, smt_u8_4, len(smt)) + smt)
+        else:
+            ca.extend(struct.pack(">H", 0))
+        return struct.pack(">HHHHHI", acc, cp4.utf8(name), cp4.utf8(desc), 1, code_u8_4, len(ca)) + bytes(ca)
+
+    # 41-byte body: backward loop edge goto -8 -> PC=0 (full_frame ft=255, d0=0), plus frames at PC=11 and PC=19
+    sr_full_bc = (
+        b"\x1b\x99\x00\x0a\x03\x3c\x00\x00\xa7\xff\xf8"
+        + b"\x2a" + struct.pack(">BH", 0xB6, mref_vis4)
+        + b"\x99\x00\x04\xb1"
+        + (b"\x00" * 21) + b"\xb1"
+    )
+    assert len(sr_full_bc) == 41
+    sr_full_smt = (
+        struct.pack(">HBHH", 3, 255, 0, 3)
+        + struct.pack(">BH", 7, t4)
+        + b"\x01"
+        + struct.pack(">BH", 7, map_cls4)
+        + struct.pack(">HBB", 0, 10, 7)
+    )
+    m4 = [
+        raw_m4(0x0001, "<init>", "()V", 1, 1, b"\x2a" + struct.pack(">BH", 0xB7, obj_init4) + b"\xb1"),
+        raw_m4(0x0001, "isVisible", "()Z", 1, 1, b"\x2a" + struct.pack(">BH", 0xB4, f_vis4) + b"\xac"),
+        raw_m4(0x0002, "executeScript", "(Ljava/lang/String;)V", 2, 2,
+               b"\x2a\x2b" + struct.pack(">BH", 0xB5, f_last4) + b"\xb1"),
+        raw_m4(0x0001, "scriptsRef", "()[Ljava/lang/String;", 4, 1,
+               b"\x05" + struct.pack(">BH", 0xBD, str_cls4)
+               + b"\x59\x03" + struct.pack(">BH", 0x13, s_wc4) + b"\x53"
+               + b"\x59\x04" + struct.pack(">BH", 0x13, s_wh4) + b"\x53\xb0"),
+        raw_m4(0x0001, "sendSuspendResume", "(ZLjava/util/Map;)V", 3, 3, sr_full_bc, smt=sr_full_smt),
+    ]
+    w_full_cls = (
+        struct.pack(">IHH", 0xCAFEBABE, 0, 61)
+        + cp4.serialize()
+        + struct.pack(">HHHHH", 0x0021, t4, s4, 0, len(f_list4))
+        + b"".join(f_list4)
+        + struct.pack(">H", len(m4))
+        + b"".join(m4)
+        + struct.pack(">H", 0)
+    )
+    return w_cls, loc_cls, lng_cls, w_full_cls
 
 
 class MiniJVM:
@@ -626,9 +690,15 @@ def verify_against_classes(jvm: MiniJVM, agent_obj, orig_w: bytes, orig_loc: byt
     assert b"ibkr-cpu-fix" in out_w and b"toggle-pill-label::after" in out_w
     assert bj.JS_HIDE.encode("utf-8") in out_w and bj.JS_SHOW.encode("utf-8") in out_w
 
+    _, _, _, _, _, _, orig_m_w = parse_raw_classfile(orig_w)
+    orig_sr_code = orig_m_w[("sendSuspendResume", "(ZLjava/util/Map;)V")][1]["Code"]
+    _, _, orig_sr_clen = struct.unpack_from(">HHI", orig_sr_code, 0)
+
     sr_code = m_w[("sendSuspendResume", "(ZLjava/util/Map;)V")][1]["Code"]
     _, _, sr_clen = struct.unpack_from(">HHI", sr_code, 0)
-    assert sr_clen == 63 and sr_code.endswith(bytes.fromhex("000415060f0b"))
+    assert sr_clen == orig_sr_clen + 28, f"Expected sendSuspendResume code_length {orig_sr_clen + 28}, got {sr_clen}"
+    assert sr_code[8:13] == b"\x1b\x99\x00\x14\x2a", "Missing 28-byte prologue header"
+    assert sr_code[36:36 + orig_sr_clen] == orig_sr_code[8:8 + orig_sr_clen], "Original method body mismatch after 28-byte prologue"
 
     for mn, md in (
         ("confirmTranslationLater", "()V"),
@@ -641,16 +711,17 @@ def verify_against_classes(jvm: MiniJVM, agent_obj, orig_w: bytes, orig_loc: byt
 
 def dump_fixtures(out_dir: str):
     os.makedirs(out_dir, exist_ok=True)
-    syn_w, syn_loc, syn_lng = build_synthetic_fixtures()
+    syn_w, syn_loc, syn_lng, syn_w_full = build_synthetic_fixtures()
     paths = [
         (os.path.join(out_dir, "QWebAppEngineView.orig.class"), syn_w),
         (os.path.join(out_dir, "LocaleResourcesMgr.orig.class"), syn_loc),
         (os.path.join(out_dir, "LanguageSettings.orig.class"), syn_lng),
+        (os.path.join(out_dir, "QWebAppEngineViewFullFrame.orig.class"), syn_w_full),
     ]
     for p, b in paths:
         with open(p, "wb") as f:
             f.write(b)
-    print(f"  [DUMPED] Wrote 3 synthetic ClassFile v61.0 targets to {out_dir}")
+    print(f"  [DUMPED] Wrote 4 synthetic ClassFile v61.0 targets to {out_dir}")
 
 
 def run_verification(jar_path: str, ibkr_jar: str = None, dump_dir: str = None):
@@ -666,11 +737,13 @@ def run_verification(jar_path: str, ibkr_jar: str = None, dump_dir: str = None):
     jvm.invoke("premain", "(Ljava/lang/String;Ljava/lang/instrument/Instrumentation;)V", ["", inst])
     agent_obj = inst["transformer"]
 
-    syn_w, syn_loc, syn_lng = build_synthetic_fixtures()
+    syn_w, syn_loc, syn_lng, syn_w_full = build_synthetic_fixtures()
     verify_classfile(syn_w, "Original Mock QWebAppEngineView.class")
+    verify_classfile(syn_w_full, "Original Mock QWebAppEngineViewFullFrame.class")
     verify_classfile(syn_loc, "Original Mock LocaleResourcesMgr.class")
     verify_classfile(syn_lng, "Original Mock LanguageSettings.class")
     verify_against_classes(jvm, agent_obj, syn_w, syn_loc, syn_lng, "synthetic-target")
+    verify_against_classes(jvm, agent_obj, syn_w_full, syn_loc, syn_lng, "synthetic-fullframe-pc0")
 
     if dump_dir:
         dump_fixtures(dump_dir)

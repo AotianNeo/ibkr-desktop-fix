@@ -13,8 +13,8 @@ import java.util.Map;
  */
 public final class JvmSmokeTest extends ClassLoader {
     public static void main(String[] args) throws Exception {
-        if (args.length != 3) {
-            throw new IllegalArgumentException("Expected 3 target class paths");
+        if (args.length != 3 && args.length != 4) {
+            throw new AssertionError("Expected 3 or 4 target class paths");
         }
         WebChannelFixAgent agent = new WebChannelFixAgent();
         byte[] wIn = Files.readAllBytes(Path.of(args[0]));
@@ -85,6 +85,32 @@ public final class JvmSmokeTest extends ClassLoader {
             .invoke(lngObj, "zh_CN");
         if (!confirmed) {
             throw new AssertionError("Expected isTranslationConfirmed to return true");
+        }
+
+        // 4. Optional: verify & execute full_frame (ft=255, d0=0 at PC=0) + non-35-byte sendSuspendResume variant
+        if (args.length == 4) {
+            byte[] wFullIn = Files.readAllBytes(Path.of(args[3]));
+            byte[] wFullOut = agent.transform(null, "ibkr/webview/QWebAppEngineView", null, null, wFullIn);
+            if (wFullOut == null) {
+                throw new AssertionError("Expected non-null transformed bytecodes for full_frame variant");
+            }
+            JvmSmokeTest loader2 = new JvmSmokeTest();
+            Class<?> wfCls = loader2.loadAndVerify("ibkr.webview.QWebAppEngineView", wFullOut);
+            Object wfObj = wfCls.getDeclaredConstructor().newInstance();
+            Method wfSuspend = wfCls.getMethod("sendSuspendResume", boolean.class, Map.class);
+
+            wfCls.getField("visible").setBoolean(wfObj, false);
+            wfSuspend.invoke(wfObj, true, null);
+            String fs1 = (String) wfCls.getField("lastScript").get(wfObj);
+            if (fs1 == null || !fs1.contains("__ibkrHostHidden=true")) {
+                throw new AssertionError("Expected hidden=true on full_frame variant, got: " + fs1);
+            }
+
+            wfSuspend.invoke(wfObj, false, null);
+            String fs2 = (String) wfCls.getField("lastScript").get(wfObj);
+            if (fs2 == null || !fs2.contains("__ibkrHostHidden=false")) {
+                throw new AssertionError("Expected hidden=false on full_frame variant, got: " + fs2);
+            }
         }
         System.out.println("[JvmSmokeTest] HotSpot -Xverify:all verified and executed all transformed classes!");
     }
