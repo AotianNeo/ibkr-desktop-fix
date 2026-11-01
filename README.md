@@ -155,7 +155,7 @@ ibkr-desktop-fix/
 ├── tests/JvmSmokeTest.java               # HotSpot (-Xverify:all) native C++ bytecode verification & execution smoke test
 ├── install.py                            # Cross-platform atomic installer & uninstaller (macOS / Linux / Windows)
 ├── install.sh                            # POSIX shell entrypoint for install.py
-└── .github/workflows/ci.yml              # Matrix CI validating both build backends under HotSpot -Xverify:all (JDK 17 & 21)
+└── .github/workflows/ci.yml              # Matrix CI validating both build backends under HotSpot -Xverify:all (JDK 17, 21 & 25)
 ```
 
 To build and run the full verification suite locally:
